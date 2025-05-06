@@ -59,6 +59,24 @@ import reactor.core.publisher.Mono;
  * @see HttpServlet
  */
 
+/**
+ * @WebServlet 注解是 Jakarta Servlet API 提供的一种用于简化 servlet 配置的方法。它允许开发者通过注解的方式而非传统的 web.xml 描述符文件来定义 servlet 的基本信息和映射。
+ * 作用
+ * 	Servlet 注册和映射:
+ * 		@WebServlet 用于将一个 Java 类注册为 servlet，并定义其 URL 映射。这样，容器（如 Tomcat、Jetty 等）在部署应用时，会自动识别和配置这个 servlet。
+ * 	减少配置的复杂性:
+ * 		使用注解可以减少在 web.xml 中手动配置的繁琐过程，直接通过注解参数定义 servlet 的各种属性，使代码更为简洁和集中。
+ * 	配置初始化参数:
+ * 		可以通过注解的属性配置 servlet 的初始化参数，简化了传统方式中的配置流程。
+ *
+ * 	使用方法
+ * 		@WebServlet 注解可以用于一个类上，该类必须扩展 HttpServlet 类。常用的属性包括：
+ * 			name: 用于指定 servlet 的名称。
+ * 			urlPatterns 或 value: 指定该 servlet 可以处理的请求 URL 模式。value 是 urlPatterns 的一个别名。
+ * 			initParams: 指定初始化参数。
+ * 			loadOnStartup: 指定 servlet 的加载顺序。
+ * 			asyncSupported: 指定 servlet 是否支持异步处理。
+ */
 @WebServlet(asyncSupported = true)
 public class HttpServletSseServerTransportProvider extends HttpServlet implements McpServerTransportProvider {
 
@@ -172,6 +190,19 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 			.flatMap(session -> session.sendNotification(method, params)
 				.doOnError(
 						e -> logger.error("Failed to send message to session {}: {}", session.getId(), e.getMessage()))
+				// onErrorComplete() 方法用于处理流中的错误信号
+				//	onErrorComplete() 的作用
+				//		错误转换为完成:
+				//			当流中出现错误时，onErrorComplete() 会拦截该错误，并将其转换为一个完成信号。这样，流就会以正常完成的状态结束，而不是传播错误。
+				//		错误处理逻辑简化:
+				//			使用 onErrorComplete() 可以在某些情况下简化错误处理逻辑，特别是当你希望忽略某些错误并结束流处理时。
+				//		控制流的终止方式:
+				//			通过使用 onErrorComplete()，你可以控制流在遇到错误时的终止方式，让流以完成状态结束，而不是由于错误而中断。
+				//	使用场景
+				//		忽略某些错误:
+				//			当特定类型的错误不需要被处理或传播时，使用 onErrorComplete() 可以让流继续正常结束。
+				//		特定条件下的错误处理:
+				//			结合条件逻辑，可以对特定的错误类型或条件进行处理，而忽略其他错误。
 				.onErrorComplete())
 			.then();
 	}
@@ -187,6 +218,8 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 	 * @throws ServletException If a servlet-specific error occurs
 	 * @throws IOException If an I/O error occurs
 	 */
+
+	//doGet 方法用于处理 HTTP GET 请求，并在特定情况下开启异步处理。
 	@Override
 	protected void doGet(HttpServletRequest request, HttpServletResponse response)
 			throws ServletException, IOException {
@@ -202,6 +235,7 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 			return;
 		}
 
+		// 设置响应头: 配置响应为 text/event-stream，设置为 UTF-8 编码，并设定适当的 HTTP 头以支持 Server-Sent Events (SSE)。
 		response.setContentType("text/event-stream");
 		response.setCharacterEncoding(UTF_8);
 		response.setHeader("Cache-Control", "no-cache");
@@ -209,6 +243,20 @@ public class HttpServletSseServerTransportProvider extends HttpServlet implement
 		response.setHeader("Access-Control-Allow-Origin", "*");
 
 		String sessionId = UUID.randomUUID().toString();
+		// 使用 request.startAsync() 开启异步处理，返回 AsyncContext 对象以管理异步操作。
+		// 开启异步处理:
+		//	request.startAsync() 方法用于启动异步处理模式，它允许请求在不阻塞 servlet 线程的情况下继续处理。这对于长时间运行的请求或需要保持连接打开的场景（如 SSE）非常有用。
+		//返回 AsyncContext 对象:
+		//	AsyncContext 是用于管理异步操作的核心对象。它提供了一些方法来控制异步请求的生命周期，比如完成、超时和调度异步任务。
+		//  异步处理是 Java Servlet 3.0 引入的一项功能，旨在提高服务器的并发能力，特别是对于长时间运行的任务或需要保持连接的任务（如 SSE、WebSocket）而言。通过使用 AsyncContext，可以在不占用服务器线程的情况下处理复杂的异步请求逻辑，从而提升应用的响应能力和吞吐量。
+		//AsyncContext 可以做什么
+		//	控制异步请求生命周期:
+		//		可以通过调用 asyncContext.complete() 来显式完成异步请求。
+		//		设置异步请求的超时时间，通过 asyncContext.setTimeout(long timeout) 方法控制请求持续时间。
+		//	调度异步任务:
+		//		可以通过 asyncContext.start(Runnable runnable) 方法，将任务分配到容器管理的线程池中进行异步执行。
+		//	获取原始请求和响应对象:
+		//		asyncContext.getRequest() 和 asyncContext.getResponse() 可以用于获取原始的 HttpServletRequest 和 HttpServletResponse 对象，以便在异步操作中继续使用。
 		AsyncContext asyncContext = request.startAsync();
 		asyncContext.setTimeout(0);
 

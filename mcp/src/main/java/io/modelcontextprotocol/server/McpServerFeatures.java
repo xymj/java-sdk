@@ -134,6 +134,7 @@ public class McpServerFeatures {
 
 	/**
 	 * Synchronous server features specification.
+	 * 同步服务器规范
 	 *
 	 * @param serverInfo The server implementation details
 	 * @param serverCapabilities The server capabilities
@@ -244,10 +245,15 @@ public class McpServerFeatures {
 			if (tool == null) {
 				return null;
 			}
+			// Mono.fromCallable() 是用于将一个 Callable 转换为一个 Mono。
+			// Callable 是一个可以返回值或抛出异常的接口，类似于 Runnable，但它是有返回值的。
+			// fromCallable 可以用于创建一个异步任务，该任务会在被订阅时执行。
 			return new AsyncToolSpecification(tool.tool(),
 					(exchange, map) -> Mono
 						.fromCallable(() -> tool.call().apply(new McpSyncServerExchange(exchange), map))
 						.subscribeOn(Schedulers.boundedElastic()));
+			// Schedulers.boundedElastic() 是在 Reactor 3.4 中引入的一种调度器，适用于需要并发且可能阻塞的任务，例如 I/O 操作。
+			// 这个调度器是一个弹性线程池，能够在需要时创建线程，并在空闲时回收线程。
 		}
 	}
 
@@ -412,6 +418,7 @@ public class McpServerFeatures {
 	 * {@link McpSyncServerExchange} upon which the server can interact with the connected
 	 * client. The second arguments is a map of arguments passed to the tool.
 	 */
+	// 同步工具实现类
 	public record SyncToolSpecification(McpSchema.Tool tool,
 			BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> call) {
 	}

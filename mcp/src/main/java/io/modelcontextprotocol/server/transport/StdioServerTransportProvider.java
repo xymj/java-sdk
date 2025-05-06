@@ -149,6 +149,15 @@ public class StdioServerTransportProvider implements McpServerTransportProvider 
 		@Override
 		public Mono<Void> sendMessage(McpSchema.JSONRPCMessage message) {
 
+			// Mono.zip() 是一个方法，它接收两个或更多的 Mono 对象，并且等待所有的这些 Mono 对象都成功完成后，将它们的结果组合起来。在这个特定的例子中：
+			//inboundReady.asMono()：表示一个异步操作，当输入准备好后会发出信号。
+			//outboundReady.asMono()：表示另一个异步操作，当输出准备好后会发出信号。
+			//Mono.zip() 等待这两个异步操作都完成（即输入和输出都准备好），之后才会继续执行后续的操作。
+
+			//then() 方法是 Mono 类的一个方法，它允许你在当前 Mono 操作完成后执行另一个 Mono 操作。这里的 Mono.defer() 是一个延迟创建 Mono 的方式，直到实际需要的时候才去创建。具体来说，在这个例子中：
+			//
+			//如果 outboundSink.tryEmitNext(message) 成功，则返回一个空的 Mono (Mono.empty())，表示消息已经成功发送。
+			//否则，抛出一个运行时异常 (RuntimeException) 表示消息无法入队。
 			return Mono.zip(inboundReady.asMono(), outboundReady.asMono()).then(Mono.defer(() -> {
 				if (outboundSink.tryEmitNext(message).isSuccess()) {
 					return Mono.empty();
@@ -186,9 +195,30 @@ public class StdioServerTransportProvider implements McpServerTransportProvider 
 		}
 
 		private void handleIncomingMessages() {
+			//doOnTerminate() 方法是一个钩子，它会在流的生命周期即将结束时触发。具体来说，doOnTerminate() 会在以下两种情况下被调用：
+			//	正常完成: 当流正常完成（即所有元素都已处理并发射完成信号）时触发。
+			//	异常终止: 当流因错误而终止时触发。
+			//	doOnTerminate() 不会区分流是正常结束还是异常结束，也就是说，它不关心流的终止原因，只关注终止的事实。
 			this.inboundSink.asFlux().flatMap(message -> session.handle(message)).doOnTerminate(() -> {
 				// The outbound processing will dispose its scheduler upon completion
+				// inboundSink.tryEmitComplete() 是 Reactor 中 Sinks.Many 接口提供的方法之一，用于向下游信号发射一个完成信号。这是一个重要的操作，因为在反应式流中，完成信号表示数据流的终止。
+				//	tryEmitComplete() 的作用
+				//		发射完成信号:
+				//			tryEmitComplete() 用于指示数据流已经到达终点，没有更多的数据会被发射。下游的消费者会收到此信号，并可以执行相应的终止逻辑。
+				//		终止流:
+				//			在调用 tryEmitComplete() 之后，Sinks.Many 不会接收新的数据发射操作。任何后续的 tryEmitNext() 调用都将被忽略，或者返回失败状态。
+				//		资源清理:
+				//			对于流的下游，完成信号可以触发资源清理操作，例如关闭连接、释放内存或其他清理工作。这使得在异步和并行处理场景中，能够有效地管理和释放资源。
+				//		使用场景
+				//			数据流结束: 在所有数据项被处理之后调用 tryEmitComplete()，通知下游没有更多的数据，这通常用于文件读取结束、数据流处理结束等场景。
+				//			主动终止流: 在某些条件下，决定提前终止流的处理，比如检测到某种终止条件或者发生错误后不再继续处理。
 				this.outboundSink.tryEmitComplete();
+
+				//inboundScheduler.dispose() 的作用
+				//	释放资源:
+				//		dispose() 方法用于释放调度器所用的资源，通常是在调度器不再需要时调用的。释放资源的动作可以防止资源泄漏，特别是在长时间运行的应用或服务器中，这样做可以确保应用的资源使用更高效。
+				//	终止调度器:
+				//		调用 dispose() 后，调度器将不会接受新的任务。已经在执行队列中的任务可能会被正常执行完毕，但新的任务提交将被拒绝。
 				this.inboundScheduler.dispose();
 			}).subscribe();
 		}
@@ -255,6 +285,14 @@ public class StdioServerTransportProvider implements McpServerTransportProvider 
 			Function<Flux<JSONRPCMessage>, Flux<JSONRPCMessage>> outboundConsumer = messages -> messages // @formatter:off
 				 .doOnSubscribe(subscription -> outboundReady.tryEmitValue(null))
 				 .publishOn(outboundScheduler)
+				 // handle 方法和 sink 的作用
+				 //sink 的作用:
+				 //		sink 是 SynchronousSink 的一个实例，用于在 handle 操作符中发射（emit）元素。
+				 //		它允许你对每个元素执行自定义逻辑，然后通过调用 sink.next(value) 发射处理后的元素。
+				 //		你还可以通过 sink.error(error) 发射错误信号，或者通过 sink.complete() 发射完成信号。
+				 //handle 方法的功能:
+				 //		handle 是一个操作符，用于提供对每个流元素的自定义处理逻辑。它结合了 map 和 filter 的功能，因为可以选择性地发射零个或多个元素。
+				 //		在你的代码中，它被用来将 JSONRPCMessage 对象转换成 JSON 字符串，并将其写入 outputStream。如果成功写入，则通过 sink.next(message) 发射处理过的消息。如果发生错误，则通过 sink.error() 发射错误信号。
 				 .handle((message, sink) -> {
 					 if (message != null && !isClosing.get()) {
 						 try {
@@ -294,6 +332,13 @@ public class StdioServerTransportProvider implements McpServerTransportProvider 
 						 outboundScheduler.dispose();
 					 }
 				 })
+				 //具体作用
+				 //	类型转换:
+				 //		这段代码通过 map 操作符对流中的每个元素进行操作，将其转换为 JSONRPCMessage 类型。
+				 //		由于 handle 操作符返回的流元素类型不明确，使用这一步可以确保后续操作处理的是明确的 JSONRPCMessage 类型。
+				 //	数据流操作:
+				 //		map 是一个常见的流操作符，用于将输入流中的元素转换为另一种形式的元素，并生成一个新的流。这种转换是通过提供的函数（这里是 msg -> (JSONRPCMessage) msg）进行的。
+				 //在这个例子中，map 的转换作用似乎是冗余的，或者是为了确保流中的每个元素在类型上是 JSONRPCMessage。如果前面的流处理已经保证了元素类型一致，这一步可能没有显式的必要。
 				 .map(msg -> (JSONRPCMessage) msg);
 	
 				 outboundConsumer.apply(outboundSink.asFlux()).subscribe();

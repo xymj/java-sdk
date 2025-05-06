@@ -20,6 +20,7 @@ import reactor.core.publisher.Mono;
  * @author Dariusz Jędrzejczyk
  * @author Christian Tzolov
  */
+//代表与模型上下文协议（MCP）客户端的异步交换。交换提供了与客户端交互并查询其功能的方法。
 public class McpAsyncServerExchange {
 
 	private final McpServerSession session;

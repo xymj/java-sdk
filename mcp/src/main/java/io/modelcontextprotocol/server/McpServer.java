@@ -1121,6 +1121,7 @@ public interface McpServer {
 		 * @return A new instance of {@link McpSyncServer} configured with this builder's
 		 * settings.
 		 */
+		// 构建同步MCP服务器 通过同步的规范参数信息
 		public McpSyncServer build() {
 			McpServerFeatures.Sync syncFeatures = new McpServerFeatures.Sync(this.serverInfo, this.serverCapabilities,
 					this.tools, this.resources, this.resourceTemplates, this.prompts, this.completions,

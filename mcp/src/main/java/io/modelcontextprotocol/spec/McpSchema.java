@@ -131,8 +131,30 @@ public final class McpSchema {
 
 	}
 
+	/**
+	 * 引入了 sealed 类和接口的概念。这是一种新的访问控制机制，允许开发者限制继承或实现特定类或接口的其他类。
+	 *
+	 * sealed 关键字
+	 * 目的:
+	 * 		sealed 关键字用于声明一个类或接口，其子类或实现是有限的、明确的。
+	 * 		它允许类或接口的作者控制哪些具体的类可以继承或实现该类或接口。
+	 * 优点:
+	 * 		增强了代码的可读性和可维护性，因为开发者可以一目了然地知道所有可能的子类。
+	 * 		提高了代码的安全性，防止未预见的子类或实现。
+	 * 		与模式匹配一起使用时，可以获得更加详尽的编译时检查和优化。
+	 *
+	 * permits 关键字
+	 * 用途:
+	 * 		permits 子句用于显式列出允许直接继承或实现 sealed 类或接口的类。
+	 * 		列出所有允许的子类或实现必须在 sealed 类或接口的同一包中，或者在同一模块（如果模块化）中。
+	 * 必要性:
+	 * 		permits 子句明确告诉编译器和开发者哪些类是被允许的扩展者，这种明确性有助于理解继承结构。
+	 *
+	 * 在这个Request接口定义中，InitializeRequest, CallToolRequest, CreateMessageRequest, CompleteRequest, GetPromptRequest 是 Request 的唯一几个实现类。
+	 * 任何其他类尝试实现 Request 接口都会导致编译错误。
+	 */
 	public sealed interface Request
-			permits InitializeRequest, CallToolRequest, CreateMessageRequest, CompleteRequest, GetPromptRequest {
+		permits InitializeRequest, CallToolRequest, CreateMessageRequest, CompleteRequest, GetPromptRequest {
 
 	}
 
@@ -141,13 +163,14 @@ public final class McpSchema {
 
 	/**
 	 * Deserializes a JSON string into a JSONRPCMessage object.
+	 *
 	 * @param objectMapper The ObjectMapper instance to use for deserialization
-	 * @param jsonText The JSON string to deserialize
+	 * @param jsonText     The JSON string to deserialize
 	 * @return A JSONRPCMessage instance using either the {@link JSONRPCRequest},
 	 * {@link JSONRPCNotification}, or {@link JSONRPCResponse} classes.
-	 * @throws IOException If there's an error during deserialization
+	 * @throws IOException              If there's an error during deserialization
 	 * @throws IllegalArgumentException If the JSON structure doesn't match any known
-	 * message type
+	 *                                  message type
 	 */
 	public static JSONRPCMessage deserializeJsonRpcMessage(ObjectMapper objectMapper, String jsonText)
 			throws IOException {
@@ -179,6 +202,21 @@ public final class McpSchema {
 
 	}
 
+	/**
+	 * record 关键字的作用
+	 * 简化数据类:
+	 * 		record 用于定义一个类，该类的主要目的是存储数据而不是实现复杂的行为。
+	 * 		它自动实现了所有实例字段的 getter 方法，equals 方法，hashCode 方法，和 toString 方法。
+	 * 不可变性:
+	 * 		record 类的实例是不可变的，意味着一旦创建就无法修改它们的状态。
+	 * 		这种不可变性使得 record 类特别适合用于多线程环境下的数据传递。
+	 * 构造器:
+	 * 		record 自动提供一个构造器，用于初始化所有的字段。
+	 * 		你可以添加额外的逻辑到该构造器中，但不能改变字段的初始化方式。
+	 * 访问方法自动生成：
+	 * 		在 record 类中，所有定义的字段（JSONRPCRequest是 jsonrpc, method, id, params）自动生成名为这些字段的访问器方法。
+	 * 		因此，jsonrpc() 方法自动由 record 结构生成。不会生成set方法，字段值初始化完不可变。
+	 */
 	@JsonInclude(JsonInclude.Include.NON_ABSENT)
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record JSONRPCRequest( // @formatter:off
@@ -188,6 +226,27 @@ public final class McpSchema {
 			@JsonProperty("params") Object params) implements JSONRPCMessage {
 	} // @formatter:on
 
+
+	/**
+	 * @JsonInclude(JsonInclude.Include.NON_ABSENT)
+	 * 		@JsonInclude 注解用于定义在序列化过程中是否包含某些属性。具体来说，JsonInclude.Include.NON_ABSENT 的作用是：
+	 * 			非空值:
+	 * 				NON_ABSENT 意味着在序列化时，属性值如果是非空的，则包含在生成的 JSON 中。
+	 * 				对于基本数据类型和非 Optional 类型，NON_ABSENT 等价于 NON_NULL，即不包含值为 null 的属性。
+	 * 			可选类型:
+	 * 				对于 Optional 类型的属性，NON_ABSENT 还会检查 Optional 是否为 absent（即 isPresent() 返回 false）。
+	 * 				如果一个属性的值是 Optional.empty()，则在序列化时不会包含该属性。
+	 *
+	 * @JsonIgnoreProperties(ignoreUnknown = true)
+	 * @JsonIgnoreProperties 注解用于在反序列化过程中忽略 JSON 中存在，但在 Java 对象中不存在的属性。
+	 * ignoreUnknown = true 的作用是：
+	 * 		忽略未知属性:
+	 *			当从 JSON 数据反序列化为 Java 对象时，如果 JSON 中包含 Java 类中没有定义的字段，Jackson 将会忽略这些字段，而不是抛出异常。
+	 * 			这对于处理可能包含额外或不需要的属性的 JSON 数据特别有用。
+	 * 		增强兼容性:
+	 * 			允许应用程序在不需要关心 JSON 结构中所有细节的情况下处理输入数据，尤其是在 JSON 数据的结构可能会随时间而改变的情况下。
+	 *
+	 */
 	@JsonInclude(JsonInclude.Include.NON_ABSENT)
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record JSONRPCNotification( // @formatter:off
@@ -697,6 +756,7 @@ public final class McpSchema {
 		@JsonProperty("nextCursor") String nextCursor) {
 	}// @formatter:on
 
+	// 工具入参的json schema
 	@JsonInclude(JsonInclude.Include.NON_ABSENT)
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record JsonSchema( // @formatter:off
@@ -721,6 +781,7 @@ public final class McpSchema {
 	 * the arguments when calling this tool. This allows clients to validate tool
 	 * arguments before sending them to the server.
 	 */
+	// 工具信息
 	@JsonInclude(JsonInclude.Include.NON_ABSENT)
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record Tool( // @formatter:off

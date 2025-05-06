@@ -3,6 +3,7 @@ package io.modelcontextprotocol.spec;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -19,6 +20,7 @@ import reactor.core.publisher.Sinks;
  * Represents a Model Control Protocol (MCP) session on the server side. It manages
  * bidirectional JSON-RPC communication with the client.
  */
+//代表服务器端上的模型控制协议（MCP）会话。它管理与客户的双向JSON-RPC通信。
 public class McpServerSession implements McpSession {
 
 	private static final Logger logger = LoggerFactory.getLogger(McpServerSession.class);
@@ -100,6 +102,16 @@ public class McpServerSession implements McpSession {
 	 * @param clientInfo the information about the connected client
 	 */
 	public void init(McpSchema.ClientCapabilities clientCapabilities, McpSchema.Implementation clientInfo) {
+		//lazySet(V newValue) 方法用于设置 AtomicReference 的值，但不同于普通的 set 方法，它允许 JVM 在某些情况下以更高效的方式更新引用。这种效率的提升主要体现在以下几个方面：
+		//	延迟更新:
+		//		lazySet 不是立即强制将值更新的，而是允许 JVM 在不影响线程安全性的前提下稍后进行更新操作。这种延迟更新可能在某些架构下会比立即更新更加高效。
+		//	避免内存屏障:
+		//		lazySet 通常用于减少或者避免不必要的全局内存屏障（memory barriers）。内存屏障是用来保证在多线程环境下内存可见性的，但它们可能会导致性能损耗。
+		//		lazySet 的实现可能在某些硬件架构上使用了较弱的内存屏障，因而能提高性能，特别是在写操作频繁但对可见性要求不高的场景中。
+		//	最终一致性:
+		//		尽管 lazySet 是弱一致性的，最终会被设置为指定的值。即它保证在未来某个时刻会将值更新为指定值，即使它在更新过程中的可见性不如普通的 set 方法。
+		//	使用场景
+		//		lazySet 通常用于不需要立即对其他线程可见的场景，或者在需要提升性能并且对写操作的实时性要求不高的地方。例如，用于大型对象引用的更新，或者批量数据处理过程中状态标志的更新。
 		this.clientCapabilities.lazySet(clientCapabilities);
 		this.clientInfo.lazySet(clientInfo);
 	}
@@ -112,20 +124,47 @@ public class McpServerSession implements McpSession {
 	public <T> Mono<T> sendRequest(String method, Object requestParams, TypeReference<T> typeRef) {
 		String requestId = this.generateRequestId();
 
+		// Mono.create 的作用
+		//	创建 Mono:
+		//		Mono.create 用于创建一个 Mono 实例，允许你使用 sink 来发射（emit）数据、错误或完成信号。
+		//		sink 是 MonoSink 的一个实例，提供了 sink.success(value), sink.error(error) 和 sink.complete() 等方法用于管理 Mono 的生命周期。
+		//	sink 的来源:
+		//		sink 是由 Mono.create 提供的，在这里用于将发送的请求与响应处理逻辑关联起来。它在异步操作中扮演着重要角色。
 		return Mono.<McpSchema.JSONRPCResponse>create(sink -> {
+			// 挂起响应处理: 将 sink 存储起来，并与请求 ID 关联。
+			// 这允许在稍后接收到响应时，能够通过请求 ID 找到对应的 sink 来发射结果或处理错误。
 			this.pendingResponses.put(requestId, sink);
 			McpSchema.JSONRPCRequest jsonrpcRequest = new McpSchema.JSONRPCRequest(McpSchema.JSONRPC_VERSION, method,
 					requestId, requestParams);
+
+			// 负责实际发送请求消息。它返回一个 Mono，可以用于订阅响应处理。
 			this.transport.sendMessage(jsonrpcRequest).subscribe(v -> {
 			}, error -> {
+				// 对发送操作结果进行订阅，处理可能出现的错误。
+				// 在这里，如果发送过程中出现错误，响应处理被移除并通过 sink.error(error) 发射错误信号。
 				this.pendingResponses.remove(requestId);
 				sink.error(error);
 			});
-		}).timeout(requestTimeout).handle((jsonRpcResponse, sink) -> {
+			//timeout方法设置一个时限，并在指定时间内等待流发射事件（数据、完成或错误）。如果没有事件发射发生，它将导致流发射一个超时错误
+			// .timeout(requestTimeout) 是用来限制从 Mono.create 到执行 handle 的时间。如果在指定的 requestTimeout 时间内没有得到任何 McpSchema.JSONRPCResponse，则会发射一个超时错误信号。这对于处理异步请求非常重要，因为它可以防止请求无限期挂起并确保系统在合理时间内反馈结果。
+			// 在 Mono.create 内部，虽然 sink 被关联到请求 ID等待响应，但 timeout 操作符确保无论请求是否正常处理，它都会在限定时间内完成。如果超过时间没有触发任何事件（包括错误），它会自动发出超时错误。
+		}).timeout(requestTimeout)
+			.doOnError(TimeoutException.class, e -> {
+				// Handle timeout error
+				System.out.println("Request timed out: " + e.getMessage());
+			})
+		  //handle 用于对接收到的 JSONRPCResponse 进行自定义处理。
+		  //它的 sink 是与 Mono.create 中的相同，代表用于发射结果的通道。
+			//handle 的职责: handle 操作符的职责是处理和转换流中的每个元素，它通过 sink.next(value) 发射新的元素，sink.error(error) 发射错误信号，或者 sink.complete() 发射完成信号。
+			//错误和完成信号的处理: handle 不处理流的终止信号（错误或完成），这些信号会被传递给流的下游，最终由订阅者处理。
+			// handle 操作符无法直接感知到 TimeoutException 或其他的终止信号
+		  .handle((jsonRpcResponse, sink) -> {
+			// 如果 response 包含错误，则通过 sink.error(new McpError(...)) 发射错误。 技术异步流
 			if (jsonRpcResponse.error() != null) {
 				sink.error(new McpError(jsonRpcResponse.error()));
 			}
 			else {
+				// 否则，检查 typeRef 是否为 Void，如果是则发射完成信号 sink.complete()，结束异步流
 				if (typeRef.getType().equals(Void.class)) {
 					sink.complete();
 				}

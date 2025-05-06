@@ -90,6 +90,8 @@ public class McpAsyncServer {
 
 	/**
 	 * Create a new McpAsyncServer with the given transport provider and capabilities.
+	 * 使用给定的交互提供器和当前server拥有的能力建一个新的McpAsyncserver。
+	 *
 	 * @param mcpTransportProvider The transport layer implementation for MCP
 	 * communication.
 	 * @param features The MCP server supported features.
@@ -98,6 +100,7 @@ public class McpAsyncServer {
 	McpAsyncServer(McpServerTransportProvider mcpTransportProvider, ObjectMapper objectMapper,
 			McpServerFeatures.Async features, Duration requestTimeout,
 			McpUriTemplateManagerFactory uriTemplateManagerFactory) {
+		// 创建McpAsyncServer的真正实现类AsyncServerImpl
 		this.delegate = new AsyncServerImpl(mcpTransportProvider, objectMapper, requestTimeout, features,
 				uriTemplateManagerFactory);
 	}
@@ -264,6 +267,17 @@ public class McpAsyncServer {
 
 		private final String instructions;
 
+		/**
+		 * CopyOnWriteArrayList 的特性
+		 * 线程安全:
+		 * 		由于在每次写操作时都会创建一个新副本，CopyOnWriteArrayList 提供了内置的线程安全机制，可以安全地在多个线程间共享。
+		 * 一致性迭代:
+		 * 		在迭代过程中不会抛出 ConcurrentModificationException，因为迭代操作进行的是列表的快照，而不会影响或被影响于其他线程的修改。
+		 * 适用于读多写少的场景:
+		 * 		由于写操作需要复制整个数组，CopyOnWriteArrayList 的写操作性能较低。因此，它适合于读操作非常频繁，但写操作相对较少的场景。
+		 * 内存消耗:
+		 * 		每次写操作都会创建列表的一个副本，这可能会导致额外的内存消耗，尤其是在列表非常大时。
+		 */
 		private final CopyOnWriteArrayList<McpServerFeatures.AsyncToolSpecification> tools = new CopyOnWriteArrayList<>();
 
 		private final CopyOnWriteArrayList<McpSchema.ResourceTemplate> resourceTemplates = new CopyOnWriteArrayList<>();
