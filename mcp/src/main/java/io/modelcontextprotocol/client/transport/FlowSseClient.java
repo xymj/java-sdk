@@ -131,15 +131,51 @@ public class FlowSseClient {
 		AtomicReference<String> currentEventId = new AtomicReference<>();
 		AtomicReference<String> currentEventType = new AtomicReference<>("message");
 
+		//2、数据请求与处理：
+		//	onSubscribe 中调用 subscription.request(Long.MAX_VALUE)，表示订阅者可以接收无限数据。
+		//	发布者开始推送数据（逐行）。
+		//	每次 onNext(String line) 处理一行数据后，调用 subscription.request(1) 请求下一行。
+
+		// Flow.Subscriber 是 Java 流处理的核心接口，用于消费发布者（Publisher）推送的数据。它定义了四个方法：
+		//	onSubscribe(Flow.Subscription subscription)：当订阅成功时调用，用于建立与发布者的连接。
+		//	onNext(T item)：当发布者推送数据时调用。
+		//	onError(Throwable throwable)：当发生错误时调用。
+		//	onComplete()：当流结束时调用。
 		Flow.Subscriber<String> lineSubscriber = new Flow.Subscriber<>() {
+
+			// Flow.Subscription 是控制数据流速率的令牌，由 onSubscribe 方法传递给订阅者。它允许订阅者主动请求数据，避免发布者推送过快导致内存溢出。
+			// 关键方法：
+			//	request(long n)：请求 n 个数据项。
+			//	cancel()：取消订阅。
 			private Flow.Subscription subscription;
 
+			// 在 onSubscribe 中不调用 request → 流不会触发 onNext
 			@Override
 			public void onSubscribe(Flow.Subscription subscription) {
 				this.subscription = subscription;
+				// 当订阅成功时，订阅者告诉发布者："我随时可以接收任意数量的数据"
+				// 没有 request → 数据不会推送
 				subscription.request(Long.MAX_VALUE);
 			}
 
+			//作用：每当发布者（Publisher）推送一个数据项时，onNext 方法会被调用一次，传递当前数据项。
+			//职责：
+			//	处理数据：对数据项进行解析、转换、存储等操作。
+			//	控制流速：通过 subscription.request(n) 请求更多数据（可选）。
+
+
+			//onNext 的触发条件如下：
+			//	订阅成功后：
+			//		调用 subscriber.onSubscribe(subscription) 建立订阅关系。
+			//	发布者有数据可用时：
+			//		发布者调用 subscriber.onNext(item) 推送数据。
+			//	直到流结束或错误：
+			//		流结束时调用 onComplete()。
+			//		发生错误时调用 onError()。
+
+			// 主动请求机制：
+			//	onNext 的触发依赖于 subscription.request(n) 的调用。
+			//	如果未调用 request，发布者不会推送数据。
 			@Override
 			public void onNext(String line) {
 				if (line.isEmpty()) {
@@ -171,6 +207,12 @@ public class FlowSseClient {
 						}
 					}
 				}
+
+				// 3、流控制：
+				//	如果 subscription.request(1) 被注释掉，订阅者将不会请求更多数据，导致流被暂停。
+				//	subscription.request(Long.MAX_VALUE) 可能导致内存问题（如果数据量极大）。
+
+				// 每次处理完一条数据后，请求下一条数据，控制流速为逐条处理。
 				subscription.request(1);
 			}
 
@@ -190,9 +232,32 @@ public class FlowSseClient {
 			}
 		};
 
+		// 在 Java 的 HttpClient API 中，HttpResponse.BodySubscribers.fromLineSubscriber(subscriber) 是一个 关键工具方法，用于将 HTTP 响应体 按行（Line-by-Line） 解析，并通过 Flow.Subscriber 处理每一行数据
+		//1. 核心作用
+		//该方法的作用是：
+		//	将 HTTP 响应体转换为行流（Line Stream），逐行读取数据。
+		//	通过 Flow.Subscriber 处理每一行数据，支持异步和响应式编程模型。
+		//2. 使用场景
+		//	适用于需要 逐行处理响应体 的场景，例如：
+		//		Server-Sent Events (SSE)：实时接收服务器推送的事件流（如股票价格更新、日志流）。
+		//		大文件分块处理：按行处理大文件（如 CSV、日志文件），避免一次性加载到内存。
+		//		实时日志监控：逐行解析日志流，实时分析或展示。
+
+		//工作原理
+		//	响应体读取：
+		//		客户端将 HTTP 响应体按行（以 \n 或 \r\n 分割）逐行读取。
+		//	逐行推送：
+		//		每一行数据通过 subscriber.onNext(line) 推送。
+		//	流控制：
+		//		通过 Flow.Subscription 控制数据流速率（避免内存溢出）。
 		Function<Flow.Subscriber<String>, HttpResponse.BodySubscriber<Void>> subscriberFactory = subscriber -> HttpResponse.BodySubscribers
+			// 参数subscriber：一个 Flow.Subscriber 实例，用于消费每一行数据。
+			// 返回值一个 BodySubscriber<Void>，用于订阅 HTTP 响应体的行流。
 			.fromLineSubscriber(subscriber);
 
+		// 1、订阅建立：
+		//	调用 httpClient.sendAsync(request, subscriberFactory) 发起 SSE 连接。
+		//	当连接成功，发布者（HTTP 响应体）调用 lineSubscriber.onSubscribe(subscription)。
 		CompletableFuture<HttpResponse<Void>> future = this.httpClient.sendAsync(request,
 				info -> subscriberFactory.apply(lineSubscriber));
 

@@ -1314,6 +1314,14 @@ public final class McpSchema {
 	// ---------------------------
 	// Content Types
 	// ---------------------------
+
+
+	/**
+	 * Jackson 库的注解 @JsonTypeInfo 和 @JsonSubTypes 来处理 Java 中多态类型的序列化和反序列化。
+	 * 作用:
+	 * 	@JsonTypeInfo: 指定如何在 JSON 中包含有关类型的信息。它定义了一个属性（在本例中是 "type"），将其用于在序列化和反序列化过程中指示实际对象的类型。
+	 * 	@JsonSubTypes: 列举所有可能的子类型，并为每种类型指定一个唯一的名称。在序列化为 JSON 时，这些名称用来标识实际的子类型，反序列化时用来确定该使用哪个子类型类。
+	 */
 	@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 	@JsonSubTypes({ @JsonSubTypes.Type(value = TextContent.class, name = "text"),
 			@JsonSubTypes.Type(value = ImageContent.class, name = "image"),

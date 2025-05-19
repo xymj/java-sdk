@@ -230,11 +230,15 @@ public class McpClientSession implements McpSession {
 	public <T> Mono<T> sendRequest(String method, Object requestParams, TypeReference<T> typeRef) {
 		String requestId = this.generateRequestId();
 
+		// Mono.deferContextual 是一种用于创建 Mono 的方法，该 Mono 可以访问 Reactor 的上下文（Context）。Reactor 的上下文是一种不变的、线程安全的数据结构，允许在不同的操作符之间传递信息而不必直接修改数据流中的元素。
+		// 作用：Mono.deferContextual 可以在操作链中访问上下文，并在必要时使用该上下文中的信息来影响 Mono 的行为或结果。例如，它可以用于传递和管理一些全局的事务性信息，日志追踪 ID，或其他与请求相关的元数据。
 		return Mono.deferContextual(ctx -> Mono.<McpSchema.JSONRPCResponse>create(sink -> {
 			this.pendingResponses.put(requestId, sink);
 			McpSchema.JSONRPCRequest jsonrpcRequest = new McpSchema.JSONRPCRequest(McpSchema.JSONRPC_VERSION, method,
 					requestId, requestParams);
 			this.transport.sendMessage(jsonrpcRequest)
+				// contextWrite 是一个操作符，用于在 Reactor 库的上下文中写入数据。它使得能够在创建 Mono 或 Flux 的过程中插入或修改上下文。
+				//作用：通过 contextWrite(ctx)，你可以将特定的数据（比如当前请求的追踪 ID 或用户信息）放入上下文中，以便后续的操作符可以访问到这些数据。在这段代码中，它用于在发送消息的操作链中传递上下文。
 				.contextWrite(ctx)
 				// TODO: It's most efficient to create a dedicated Subscriber here
 				.subscribe(v -> {
