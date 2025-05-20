@@ -187,12 +187,57 @@ public class WebFluxSseClientTransport implements McpClientTransport {
 	 * @return a Mono that completes when the connection is fully established
 	 * @throws McpError if there's an error processing SSE events or if an unrecognized
 	 * event type is received
+	 *
+	 * //mermaid画执行序列图
+	  sequenceDiagram
+	      participant Caller
+	      participant connect()
+	      participant eventStream() as Event Stream
+	      participant handler as User's Handler
+
+	      Caller->>connect(): 调用 connect(handler)
+	      connect()->>eventStream(): 获取 SSE 流
+	      eventStream()->>connect(): 返回 Flux<ServerSentEvent<String>>
+	      connect()->>Flux: 通过 concatMap 处理事件流
+	      loop 每个事件的处理
+	          Flux->>handle(): 封装事件为 Mono
+	          handle()->>handler: 调用 transform(handler)
+	          handler-->>Flux: 返回处理后的 Mono
+	      end
+	      connect()->>messageEndpointSink: 发射第一个 endpoint URI
+	      messageEndpointSink-->>connect(): 触发 then() 完成
 	 */
 	@Override
 	public Mono<Void> connect(Function<Mono<JSONRPCMessage>, Mono<JSONRPCMessage>> handler) {
+		// 1. 获取 SSE 事件流
 		Flux<ServerSentEvent<String>> events = eventStream();
-		this.inboundSubscription = events.concatMap(event -> Mono.just(event).<JSONRPCMessage>handle((e, s) -> {
+
+		// 2. 处理事件流，订阅并触发连接建立
+		// concatMap 是 Flux 的转换操作符，其核心作用是：
+		//		按顺序处理事件流：确保每个事件的处理完成后再处理下一个事件（避免并发问题）。
+		//		将每个事件转换为 Mono，并 按顺序订阅这些 Mono。
+		// events.concatMap(event -> {})
+		//		输入：Flux<ServerSentEvent<String>>（SSE 事件流）。
+		//		输出：转换后的 Flux，其元素类型由内部返回的 Mono 决定（这里是 JSONRPCMessage）。
+		this.inboundSubscription = events.concatMap(event ->
+			//1）、包装事件为 Mono：Mono.just(event) 将单个 ServerSentEvent 包装为 Mono。
+			//2）、处理事件逻辑：
+			//		根据事件类型（event.event()）执行不同操作：
+			//		ENDPOINT_EVENT_TYPE：提取端点 URI 并通过 messageEndpointSink 发射。
+			//		MESSAGE_EVENT_TYPE：解析 JSON 数据为 JSONRPCMessage。
+			//		其他类型：抛出错误。
+
+			// handle 是 低阶操作符，允许直接操作事件和信号（通过 Sink s）
+			// Sink (s) 的作用：
+			//		Sink 用于控制 Mono 的信号：
+			//			s.next(value)：发射数据。
+			//			s.complete()：完成 Mono。
+			//			s.error(exception)：触发错误。
+			Mono.just(event).<JSONRPCMessage>handle((e, s) -> {
 			if (ENDPOINT_EVENT_TYPE.equals(event.event())) {
+				//收到端点事件时，提取 URI 并通过 messageEndpointSink 发射。
+				//成功发射后，调用 s.complete() 完成当前 Mono。
+				//如果发射失败（如已发射过），抛出错误。
 				String messageEndpointUri = event.data();
 				if (messageEndpointSink.tryEmitValue(messageEndpointUri).isSuccess()) {
 					s.complete();
@@ -204,6 +249,9 @@ public class WebFluxSseClientTransport implements McpClientTransport {
 				}
 			}
 			else if (MESSAGE_EVENT_TYPE.equals(event.event())) {
+				//解析事件数据为 JSONRPCMessage。
+				//通过 s.next(message) 发射消息到下游。
+				//反序列化失败则抛出错误。
 				try {
 					JSONRPCMessage message = McpSchema.deserializeJsonRpcMessage(this.objectMapper, event.data());
 					s.next(message);
@@ -215,9 +263,19 @@ public class WebFluxSseClientTransport implements McpClientTransport {
 			else {
 				s.error(new McpError("Received unrecognized SSE event type: " + event.event()));
 			}
-		}).transform(handler)).subscribe();
+				// transform 是 高阶操作符，用于对每个元素应用一个函数（handler）：
+				// 		输入：handle 返回的 Mono<JSONRPCMessage>。
+				//		转换：通过 handler 处理 Mono<JSONRPCMessage>，返回新的 Mono<JSONRPCMessage>。
+				//		链式处理：transform 的输出会被 concatMap 收集到最终的 Flux 中。
+			}).transform(handler)
+
+		// concatMap结束
+		).subscribe();
 
 		// The connection is established once the server sends the endpoint event
+		// 3. 连接成功条件：等待收到第一个 ENDPOINT_EVENT
+
+		//触发连接建立的完成：messageEndpointSink.asMono().then() 等待 messageEndpointSink 发射第一个值（即收到 ENDPOINT_EVENT_TYPE 事件），表示连接成功建立。
 		return messageEndpointSink.asMono().then();
 	}
 
@@ -229,6 +287,7 @@ public class WebFluxSseClientTransport implements McpClientTransport {
 	 * Messages are sent via HTTP POST requests to the server-provided endpoint URI. The
 	 * message is serialized to JSON before transmission. If the transport is in the
 	 * process of closing, the message send operation is skipped gracefully.
+	 *
 	 * @param message the JSON-RPC message to send
 	 * @return a Mono that completes when the message has been sent successfully
 	 * @throws RuntimeException if message serialization fails

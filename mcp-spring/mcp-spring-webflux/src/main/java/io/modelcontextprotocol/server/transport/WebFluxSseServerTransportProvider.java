@@ -226,6 +226,59 @@ public class WebFluxSseServerTransportProvider implements McpServerTransportProv
 		return Flux.fromIterable(sessions.values())
 			.doFirst(() -> logger.debug("Initiating graceful shutdown with {} active sessions", sessions.size()))
 			.flatMap(McpServerSession::closeGracefully)
+			// Flux.then() 是一个 流程控制操作符，用于在 源 Flux 完成（成功或失败）后，执行另一个 Mono 或 Flux 操作。它类似于传统的 "finally" 逻辑，但以响应式的方式处理。
+			// 核心作用
+			//		在源 Flux 完成时触发后续操作：
+			//		不管源 Flux 是成功完成、错误还是被取消，then() 都会执行后续操作。
+			//		后续操作的结果会作为新序列的值或完成信号。
+			// 关键特性
+			//		不依赖源 Flux 的值：then() 的结果与源 Flux 的数据无关，仅在源完成时触发。
+			//		支持链式操作：可以返回新的 Mono 或 Flux，继续链式处理。
+			//		错误处理：如果源 Flux 发生错误，then() 仍会执行，但错误会被传递到最终的序列。
+			// 关键行为说明
+			//		仅在源 Flux 完成时触发：包括成功完成、错误或取消。
+			//		顺序执行：先处理完源 Flux 的所有项，再执行 then() 的操作。
+			//		错误传播：如果源 Flux 发生错误，then() 的结果会携带该错误。
+			// 与 doFinally() 的区别
+			//		方法	用途	返回类型	是否阻塞
+			//		then()	执行后续操作并返回新序列	Mono 或 Flux	否
+			//		doFinally()	添加完成时的副作用（如日志）	Flux（原序列）	否
+
+			// 示例详解
+			//示例 1：简单 then()（无参数）
+			//Flux.just(1, 2, 3)
+			//    .doOnNext(i -> System.out.println("Processing: " + i))
+			//    .then() // 返回 Mono<Void>
+			//    .subscribe(() -> System.out.println("All items processed!"));
+			//输出：
+			//Processing: 1
+			//Processing: 2
+			//Processing: 3
+			//All items processed!
+
+			//示例 2：带 Mono 参数的 then()
+			//Flux<User> users = Flux.just(new User("Alice"), new User("Bob"));
+			//
+			//Mono<String> result = users
+			//    .flatMap(user -> saveUser(user)) // 异步保存用户
+			//    .then(Mono.just("Users saved successfully")); // 完成后返回结果
+			//
+			//result.subscribe(System.out::println); // 输出：Users saved successfully
+
+			//示例 3：带 Flux 参数的 then()
+			//Flux<User> users = Flux.just(new User("Alice"), new User("Bob"));
+			//Flux<Post> posts = Flux.just(new Post("Post 1"), new Post("Post 2"));
+			//
+			//Flux<String> combined = users
+			//    .flatMap(user -> saveUser(user))
+			//    .then(posts
+			//        .flatMap(post -> savePost(post))
+			//    )
+			//    .then(Flux.just("All users and posts saved!"));
+			//
+			//combined.subscribe(System.out::println);
+			//// 输出：All users and posts saved!
+
 			.then();
 	}
 
@@ -310,7 +363,21 @@ public class WebFluxSseServerTransportProvider implements McpServerTransportProv
 			return ServerResponse.status(HttpStatus.NOT_FOUND)
 				.bodyValue(new McpError("Session not found: " + request.queryParam("sessionId").get()));
 		}
-
+		// Mono map和flatMap区别:
+		//		map	同步转换、无异步依赖	Mono<U>	否
+		//		flatMap	异步操作、需要处理返回的 Mono	Mono<U>	是
+		// 关键原则
+		//		map：仅用于 同步转换，返回 非 Mono 类型。类似于 函数式编程中的 map，直接转换值。
+		//		flatMap：用于 异步操作 或 处理嵌套 Mono，返回 Mono<U>。类似于 flatMap 在流处理中的作用，展开并合并结果流。
+		// 数据流流程对比:
+		//		map 的数据流
+		//			Mono<T> → map(f: T → U) → Mono<U>
+		//			流程：直接转换当前值，不触发异步操作。
+		//		flatMap 的数据流
+		//			Mono<T> → flatMap(f: T → Mono<U>) → Mono<U>
+		//			流程：
+		//				调用 f(T) 获取 Mono<U>。
+		//				订阅并展开 返回的 Mono<U>，继续链式处理。
 		return request.bodyToMono(String.class).flatMap(body -> {
 			try {
 				McpSchema.JSONRPCMessage message = McpSchema.deserializeJsonRpcMessage(objectMapper, body);

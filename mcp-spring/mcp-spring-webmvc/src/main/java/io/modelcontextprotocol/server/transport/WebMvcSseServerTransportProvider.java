@@ -269,6 +269,7 @@ public class WebMvcSseServerTransportProvider implements McpServerTransportProvi
 				try {
 					sseBuilder.id(sessionId)
 						.event(ENDPOINT_EVENT_TYPE)
+						// data方法会触发发送数据
 						.data(this.baseUrl + this.messageEndpoint + "?sessionId=" + sessionId);
 				}
 				catch (Exception e) {
